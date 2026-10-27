@@ -2,7 +2,6 @@ name: MeyzLauncher Auto Build
 
 # Pas besoin de fork : ce workflow clone Amethyst, le renomme, applique tes patchs
 # (ex. gestionnaire de skins) puis compile l'APK.
-# Place-le dans .github/workflows/ d'un repo, meme vide.
 
 on:
   workflow_dispatch:
@@ -30,7 +29,11 @@ jobs:
           distribution: zulu
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Accepter les licences Android
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo "SDKM=$SDKM" >> "$GITHUB_ENV"
+          yes | "$SDKM" --licenses > /dev/null || true
 
       - name: Cloner le launcher
         run: |
@@ -42,8 +45,9 @@ jobs:
       - name: Trouver le module de l'appli
         run: |
           cd launcher
-          GRADLE=$(grep -rl "applicationId" --include=build.gradle --include=build.gradle.kts . | head -1)
+          GRADLE=$(grep -rl "applicationId" --include=build.gradle --include=build.gradle.kts . | head -1 || true)
           [ -n "$GRADLE" ] || { echo "Module introuvable"; exit 1; }
+          echo "Fichier trouve : $GRADLE"
           echo "MODULE_DIR=$(dirname "$GRADLE")" >> "$GITHUB_ENV"
           echo "GRADLE_FILE=$GRADLE" >> "$GITHUB_ENV"
 
@@ -66,7 +70,8 @@ jobs:
         run: |
           cd launcher
           NDK=$(grep -rhoE "ndkVersion[ =]+['\"][0-9.]+" --include=build.gradle --include=build.gradle.kts . | head -1 | grep -oE "[0-9][0-9.]+" || true)
-          if [ -n "$NDK" ]; then sdkmanager "ndk;$NDK"; fi
+          echo "NDK demande : ${NDK:-aucun}"
+          if [ -n "$NDK" ]; then "$SDKM" "ndk;$NDK"; fi
 
       - uses: actions/cache@v4
         with:
