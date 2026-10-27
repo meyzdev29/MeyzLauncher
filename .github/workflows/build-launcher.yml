@@ -17,6 +17,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-java@v4
         with:
@@ -29,33 +31,13 @@ jobs:
           echo "SDKM=$SDKM" >> "$GITHUB_ENV"
           yes | "$SDKM" --licenses > /dev/null || true
 
-      - name: Trouver le module de l'appli
+      - name: Lancer le script de build Android
         run: |
-          GRADLE=$(grep -rl "applicationId" --include=build.gradle --include=build.gradle.kts . | head -1 || true)
-          [ -n "$GRADLE" ] || { echo "Module introuvable"; exit 1; }
-          echo "MODULE_DIR=$(dirname "$GRADLE")" >> "$GITHUB_ENV"
-
-      - name: Installer le NDK demande par le projet
-        run: |
-          NDK=$(grep -rhoE "ndkVersion[ =]+['\"][0-9.]+" --include=build.gradle --include=build.gradle.kts . | head -1 | grep -oE "[0-9][0-9.]+" || true)
-          echo "NDK demande : ${NDK:-aucun}"
-          if [ -n "$NDK" ]; then "$SDKM" "ndk;$NDK"; fi
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('launcher/**/*.gradle*', 'launcher/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: gradle-
-
-      - name: Compiler l'APK
-        run: |
-          chmod +x gradlew
-          ./gradlew ":$(basename "$MODULE_DIR"):assembleDebug" --no-daemon
+          chmod +x android-build.sh
+          ./android-build.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: MeyzLauncher-apk
-          path: launcher/**/build/outputs/apk/debug/*.apk
+          path: launcher/Amethyst-Android/app_pojavlauncher/build/outputs/apk/debug/*.apk
           
