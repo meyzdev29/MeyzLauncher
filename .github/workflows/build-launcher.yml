@@ -31,10 +31,20 @@ jobs:
           echo "SDKM=$SDKM" >> "$GITHUB_ENV"
           yes | "$SDKM" --licenses > /dev/null || true
 
-      - name: Lancer le script de build Android
+      - name: Appliquer les patchs du launcher
         run: |
-          chmod +x android-build.sh
-          ./android-build.sh
+          cd Amethyst-Android
+          if [ -f "../CMakeLists.patch" ]; then git apply ../CMakeLists.patch || true; fi
+          if [ -f "../JavaLauncher.patch" ]; then git apply ../JavaLauncher.patch || true; fi
+          if [ -f "../MinecraftDownloader.patch" ]; then git apply ../MinecraftDownloader.patch || true; fi
+          if [ -f "../MinecraftResourceDownloadTask.patch" ]; then git apply ../MinecraftResourceDownloadTask.patch || true; fi
+          if [ -f "../Tools.patch" ]; then git apply ../Tools.patch || true; fi
+
+      - name: Compiler l'APK avec Gradle
+        run: |
+          cd Amethyst-Android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
