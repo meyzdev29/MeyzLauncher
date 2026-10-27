@@ -1,0 +1,59 @@
+name: 2 - Build APK depuis le repo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "launcher/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Accepter les licences Android
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo "SDKM=$SDKM" >> "$GITHUB_ENV"
+          yes | "$SDKM" --licenses > /dev/null || true
+
+      - name: Trouver le module de l'appli
+        run: |
+          cd launcher
+          GRADLE=$(grep -rl "applicationId" --include=build.gradle --include=build.gradle.kts . | head -1 || true)
+          [ -n "$GRADLE" ] || { echo "Module introuvable"; exit 1; }
+          echo "MODULE_DIR=$(dirname "$GRADLE")" >> "$GITHUB_ENV"
+
+      - name: Installer le NDK demande par le projet
+        run: |
+          cd launcher
+          NDK=$(grep -rhoE "ndkVersion[ =]+['\"][0-9.]+" --include=build.gradle --include=build.gradle.kts . | head -1 | grep -oE "[0-9][0-9.]+" || true)
+          echo "NDK demande : ${NDK:-aucun}"
+          if [ -n "$NDK" ]; then "$SDKM" "ndk;$NDK"; fi
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('launcher/**/*.gradle*', 'launcher/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Compiler l'APK
+        run: |
+          cd launcher
+          chmod +x gradlew
+          ./gradlew ":$(basename "$MODULE_DIR"):assembleDebug" --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeyzLauncher-apk
+          path: launcher/**/build/outputs/apk/debug/*.apk
