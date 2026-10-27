@@ -1,0 +1,288 @@
+
+name: 1 - Importer MeyzLauncher dans le repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: "Depot a cloner"
+        default: "DumDum192/Amethyst-Offline"
+        required: true
+        type: string
+      upstream_branch:
+        description: "Branche (vide = branche par defaut)"
+        default: ""
+        type: string
+      theme_hue:
+        description: "Teinte du theme (210 = bleu, 195 = bleu clair, 0 = inchangé)"
+        default: "210"
+        type: string
+      force:
+        description: "Ecraser le dossier launcher existant"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: MeyzLauncher
+  APP_ID: com.meyz.launcher
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Recuperer le depot MeyzLauncher
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verifier le dossier launcher
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -e
+
+          if [ -d launcher ] && [ "$FORCE" != "true" ]; then
+            echo "::error::Le dossier launcher existe deja. Relance avec force=true."
+            exit 1
+          fi
+
+          rm -rf launcher
+
+      - name: Cloner Amethyst-Offline avec ses sous-modules
+        env:
+          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+        run: |
+          set -e
+
+          URL="https://github.com/${UPSTREAM_REPO}.git"
+
+          if [ -n "$UPSTREAM_BRANCH" ]; then
+            git clone --depth 1 --branch "$UPSTREAM_BRANCH" \
+              --recurse-submodules "$URL" /tmp/amethyst-offline
+          else
+            git clone --depth 1 --recurse-submodules \
+              "$URL" /tmp/amethyst-offline
+          fi
+
+          cd /tmp/amethyst-offline
+
+          test -f android-build.sh || {
+            echo "::error::Script android-build.sh introuvable."
+            exit 1
+          }
+
+          test -d Amethyst-Android || {
+            echo "::error::Sous-module Android absent."
+            exit 1
+          }
+
+          test -f Tools.patch
+          test -f MinecraftDownloader.patch
+
+      - name: Appliquer les correctifs officiels Android
+        run: |
+          set -e
+          cd /tmp/amethyst-offline
+
+          chmod +x android-build.sh
+          bash -n android-build.sh
+
+          # Le script officiel applique les correctifs du projet.
+          # Ne pas appliquer les patches une seconde fois.
+          sed -n '1,240p' android-build.sh
+
+          # Les correctifs seront appliqués par le script officiel
+          # lors de la compilation, si nécessaire.
+
+      - name: Copier les sources dans launcher
+        run: |
+          set -e
+
+          mkdir -p launcher
+
+          # Copie complète, sans perdre les correctifs et scripts
+          # nécessaires au projet Amethyst-Offline.
+          cp -a /tmp/amethyst-offline/. launcher/
+
+          # Retirer uniquement les métadonnées Git imbriquées.
+          find launcher -name .git -prune -exec rm -rf {} +
+
+          rm -rf launcher/.github
+          rm -f launcher/.gitmodules
+
+      - name: Trouver le module Android
+        run: |
+          set -e
+          cd launcher
+
+          GRADLE=$(find Amethyst-Android \
+            -type f \( -name build.gradle -o -name build.gradle.kts \) \
+            -print0 |
+            xargs -0 grep -l 'applicationId' |
+            head -n 1 || true)
+
+          if [ -z "$GRADLE" ]; then
+            echo "::error::Fichier Gradle avec applicationId introuvable."
+            exit 1
+          fi
+
+          echo "Fichier Gradle : $GRADLE"
+          echo "GRADLE_FILE=$GRADLE" >> "$GITHUB_ENV"
+          echo "MODULE_DIR=$(dirname "$GRADLE")" >> "$GITHUB_ENV"
+
+      - name: Personnaliser le nom et l'identifiant
+        run: |
+          set -e
+          cd launcher
+
+          python3 - <<'PY'
+          import os, re
+
+          path = os.environ["GRADLE_FILE"]
+          app_id = os.environ["APP_ID"]
+
+          with open(path, encoding="utf-8") as f:
+              content = f.read()
+
+          pattern = r'(?m)^(\s*applicationId\s*)[\'"][^\'"]+[\'"]'
+          updated, count = re.subn(
+              pattern,
+              lambda m: m.group(1) + '"' + app_id + '"',
+              content,
+              count=1
+          )
+
+          if count:
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(updated)
+              print("Identifiant Android modifie.")
+          else:
+              print("Aucun applicationId modifiable dans ce fichier.")
+          PY
+
+          RES="$MODULE_DIR/src/main/res"
+
+          if [ -d "$RES" ]; then
+            find "$RES" -path '*/values*/strings.xml' -type f \
+              -exec python3 -c '
+          import os, re, sys
+          name = os.environ["APP_NAME"]
+          for p in sys.argv[1:]:
+              s = open(p, encoding="utf-8").read()
+              s = re.sub(
+                  r"(<string\s+name=\"app_name\"[^>]*>).*?(</string>)",
+                  lambda m: m.group(1) + name + m.group(2),
+                  s
+              )
+              open(p, "w", encoding="utf-8").write(s)
+          ' {} +
+          fi
+
+      - name: Recolorer le theme
+        env:
+          THEME_HUE: ${{ inputs.theme_hue }}
+        run: |
+          set -e
+          python3 - <<'PY'
+          import os, re, colorsys
+
+          hue = float(os.environ.get("THEME_HUE") or "210")
+          if hue == 0:
+              print("Couleurs conservees.")
+              raise SystemExit(0)
+
+          hue /= 360
+          res = os.path.join(
+              "launcher", os.environ["MODULE_DIR"], "src/main/res"
+          )
+          pattern = re.compile(r"#([0-9a-fA-F]{6})\b")
+
+          for root, _, files in os.walk(res):
+              if not re.match(r"(values|drawable|color)", os.path.basename(root)):
+                  continue
+
+              for filename in files:
+                  if not filename.endswith(".xml"):
+                      continue
+
+                  path = os.path.join(root, filename)
+                  with open(path, encoding="utf-8") as f:
+                      original = f.read()
+
+                  def recolor(match):
+                      value = match.group(1)
+                      r, g, b = [
+                          int(value[i:i+2], 16) / 255
+                          for i in (0, 2, 4)
+                      ]
+                      h, light, sat = colorsys.rgb_to_hls(r, g, b)
+
+                      # Cibler les teintes violettes uniquement.
+                      if sat < 0.15 or not (0.70 <= h <= 0.90):
+                          return match.group(0)
+
+                      r, g, b = colorsys.hls_to_rgb(hue, light, sat)
+                      return "#" + "".join(
+                          f"{round(v * 255):02x}" for v in (r, g, b)
+                      )
+
+                  updated = pattern.sub(recolor, original)
+                  if updated != original:
+                      with open(path, "w", encoding="utf-8") as f:
+                          f.write(updated)
+
+          print("Personnalisation des couleurs terminee.")
+          PY
+
+      - name: Installer ImageMagick
+        if: ${{ hashFiles('icon.png') != '' }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+
+      - name: Remplacer les icones Android
+        if: ${{ hashFiles('icon.png') != '' }}
+        run: |
+          set -e
+
+          RES="launcher/$MODULE_DIR/src/main/res"
+          ICON="$GITHUB_WORKSPACE/icon.png"
+
+          test -f "$ICON"
+
+          for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            density="${spec%%:*}"
+            size="${spec##*:}"
+            mkdir -p "$RES/mipmap-$density"
+
+            convert "$ICON" -resize "${size}x${size}!" \
+              "$RES/mipmap-$density/ic_launcher.png"
+
+            cp "$RES/mipmap-$density/ic_launcher.png" \
+              "$RES/mipmap-$density/ic_launcher_round.png"
+          done
+
+      - name: Enregistrer les modifications
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A -f launcher
+
+          if git diff --cached --quiet; then
+            echo "Aucune modification a enregistrer."
+            exit 0
+          fi
+
+          git commit -m "Import Amethyst-Offline et personnalisation MeyzLauncher"
+          git push
+          
