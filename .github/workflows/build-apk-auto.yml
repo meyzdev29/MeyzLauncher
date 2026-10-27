@@ -1,8 +1,5 @@
 name: MeyzLauncher Auto Build
 
-# Pas besoin de fork : ce workflow clone Amethyst, le renomme, applique tes patchs
-# (ex. gestionnaire de skins) puis compile l'APK.
-
 on:
   workflow_dispatch:
     inputs:
@@ -39,7 +36,6 @@ jobs:
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
-          git config --global --get-regexp insteadOf
           BRANCH=""
           [ -n "${{ inputs.upstream_branch }}" ] && BRANCH="--branch ${{ inputs.upstream_branch }}"
           git clone --depth 1 --recurse-submodules $BRANCH \
@@ -54,12 +50,48 @@ jobs:
           echo "MODULE_DIR=$(dirname "$GRADLE")" >> "$GITHUB_ENV"
           echo "GRADLE_FILE=$GRADLE" >> "$GITHUB_ENV"
 
-      - name: Renommer en MeyzLauncher
+      - name: Renommer en MeyzLauncher (id + nom)
         run: |
           cd launcher
           sed -i -E "s/applicationId[ =]+['\"][^'\"]+['\"]/applicationId \"$APP_ID\"/" "$GRADLE_FILE"
           find "$MODULE_DIR/src/main/res" -name strings.xml -exec \
             sed -i -E "s|(<string name=\"app_name\"[^>]*>)[^<]*(</string>)|\1$APP_NAME\2|" {} +
+
+      - name: Renommer partout dans les textes de l'appli
+        run: |
+          cd launcher
+          # Remplace Amethyst / PojavLauncher dans tous les strings.xml (toutes les langues).
+          # Les lignes de credits, licence, "base sur", fork et les liens sont ignorees
+          # pour garder les mentions legales de la licence LGPL.
+          find "$MODULE_DIR/src/main/res" -path "*/values*/strings.xml" -print0 | xargs -0 perl -pi -e 'if (!/credit|licen|based on|fork|copyright|boardwalk|http/i) { s/(?<![\/\w-])(?:Amethyst|PojavLauncher|Pojav Launcher)(?![\w-])/MeyzLauncher/g }'
+
+      - name: Remplacer l'icone partout (icon.png)
+        run: |
+          if [ ! -f icon.png ]; then
+            echo "Pas de icon.png a la racine du repo : icone inchangee"
+            exit 0
+          fi
+          sudo apt-get install -y imagemagick > /dev/null
+          cd launcher
+          RES="$MODULE_DIR/src/main/res"
+
+          # Anciennes icones du lanceur (xml adaptatif + webp) qui masqueraient nos PNG
+          find "$RES" -path "*mipmap-*" \( -name "ic_launcher*.xml" -o -name "ic_launcher*.webp" -o -name "ic_launcher*.png" \) -delete
+
+          declare -A SIZES=( [mdpi]=48 [hdpi]=72 [xhdpi]=96 [xxhdpi]=144 [xxxhdpi]=192 )
+          for d in "${!SIZES[@]}"; do
+            s=${SIZES[$d]}
+            mkdir -p "$RES/mipmap-$d"
+            convert "$GITHUB_WORKSPACE/icon.png" -resize ${s}x${s} "$RES/mipmap-$d/ic_launcher.png"
+            cp "$RES/mipmap-$d/ic_launcher.png" "$RES/mipmap-$d/ic_launcher_round.png"
+          done
+
+          # Logos internes (images dont le nom contient pojav ou amethyst)
+          find "$RES" -type f \( -iname "*pojav*" -o -iname "*amethyst*" \) \( -name "*.png" -o -name "*.webp" \) | while read -r f; do
+            dim=$(identify -format "%wx%h" "$f")
+            echo "Logo remplace : $f ($dim)"
+            convert "$GITHUB_WORKSPACE/icon.png" -resize "$dim" -background none -gravity center -extent "$dim" "$f"
+          done
 
       - name: Appliquer mes patchs (patches/*.patch)
         run: |
