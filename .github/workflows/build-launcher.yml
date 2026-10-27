@@ -40,6 +40,12 @@ jobs:
           if [ -f "../MinecraftResourceDownloadTask.patch" ]; then git apply ../MinecraftResourceDownloadTask.patch || true; fi
           if [ -f "../Tools.patch" ]; then git apply ../Tools.patch || true; fi
 
+      - name: Nettoyer les ressources en double
+        run: |
+          cd Amethyst-Android
+          # Supprime les doublons PNG des icônes pour laisser place aux versions WebP
+          find app_pojavlauncher/src/main/res -name "ic_launcher*.png" -delete || true
+
       - name: Compiler l'APK avec Gradle
         run: |
           cd Amethyst-Android
