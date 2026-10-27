@@ -38,7 +38,8 @@ jobs:
       - name: Cloner le launcher
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --get-regexp insteadOf
           BRANCH=""
           [ -n "${{ inputs.upstream_branch }}" ] && BRANCH="--branch ${{ inputs.upstream_branch }}"
           git clone --depth 1 --recurse-submodules $BRANCH \
