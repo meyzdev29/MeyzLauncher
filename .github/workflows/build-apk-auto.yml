@@ -71,26 +71,37 @@ jobs:
             echo "Pas de icon.png a la racine du repo : icone inchangee"
             exit 0
           fi
-          sudo apt-get install -y imagemagick > /dev/null
+
+          # ImageMagick est normalement deja installe sur le runner
+          if ! command -v magick > /dev/null && ! command -v convert > /dev/null; then
+            sudo apt-get update -y > /dev/null
+            sudo apt-get install -y imagemagick > /dev/null
+          fi
+          if command -v magick > /dev/null; then
+            IM="magick"; ID="magick identify"
+          else
+            IM="convert"; ID="identify"
+          fi
+
           cd launcher
           RES="$MODULE_DIR/src/main/res"
 
-          # Anciennes icones du lanceur (xml adaptatif + webp) qui masqueraient nos PNG
+          # Anciennes icones du lanceur (xml adaptatif + webp + png) qui masqueraient les notres
           find "$RES" -path "*mipmap-*" \( -name "ic_launcher*.xml" -o -name "ic_launcher*.webp" -o -name "ic_launcher*.png" \) -delete
 
           declare -A SIZES=( [mdpi]=48 [hdpi]=72 [xhdpi]=96 [xxhdpi]=144 [xxxhdpi]=192 )
           for d in "${!SIZES[@]}"; do
             s=${SIZES[$d]}
             mkdir -p "$RES/mipmap-$d"
-            convert "$GITHUB_WORKSPACE/icon.png" -resize ${s}x${s} "$RES/mipmap-$d/ic_launcher.png"
+            $IM "$GITHUB_WORKSPACE/icon.png" -resize ${s}x${s} "$RES/mipmap-$d/ic_launcher.png"
             cp "$RES/mipmap-$d/ic_launcher.png" "$RES/mipmap-$d/ic_launcher_round.png"
           done
 
           # Logos internes (images dont le nom contient pojav ou amethyst)
           find "$RES" -type f \( -iname "*pojav*" -o -iname "*amethyst*" \) \( -name "*.png" -o -name "*.webp" \) | while read -r f; do
-            dim=$(identify -format "%wx%h" "$f")
+            dim=$($ID -format "%wx%h" "$f")
             echo "Logo remplace : $f ($dim)"
-            convert "$GITHUB_WORKSPACE/icon.png" -resize "$dim" -background none -gravity center -extent "$dim" "$f"
+            $IM "$GITHUB_WORKSPACE/icon.png" -resize "$dim" -background none -gravity center -extent "$dim" "$f"
           done
 
       - name: Appliquer mes patchs (patches/*.patch)
